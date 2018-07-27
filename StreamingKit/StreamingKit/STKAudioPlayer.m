@@ -1515,6 +1515,11 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
 {
 	OSStatus error;
     
+    if (disposeWasRequested)
+    {
+        return;
+    }
+    
     if (currentlyReadingEntry.dataSource != dataSourceIn)
     {
         return;
@@ -2539,6 +2544,11 @@ OSStatus AudioConverterCallback(AudioConverterRef inAudioConverter, UInt32* ioNu
     
     while (true)
     {
+        if (disposeWasRequested)
+        {
+            return;
+        }
+        
         OSSpinLockLock(&pcmBufferSpinLock);
         UInt32 used = pcmBufferUsedFrameCount;
         UInt32 start = pcmBufferFrameStartIndex;
@@ -2608,6 +2618,11 @@ OSStatus AudioConverterCallback(AudioConverterRef inAudioConverter, UInt32* ioNu
             }
             
             pthread_mutex_unlock(&playerMutex);
+        }
+        
+        if (disposeWasRequested)
+        {
+            return;
         }
         
         AudioBuffer* localPcmAudioBuffer;
