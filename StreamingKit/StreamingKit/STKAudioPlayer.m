@@ -291,6 +291,7 @@ static AudioStreamBasicDescription recordAudioStreamBasicDescription;
     OSSpinLock currentEntryReferencesLock;
 
     pthread_mutex_t playerMutex;
+    pthread_mutex_t streamMutex;
     pthread_cond_t playerThreadReadyCondition;
     pthread_mutex_t mainThreadSyncCallMutex;
     pthread_cond_t mainThreadSyncCallReadyCondition;
@@ -545,6 +546,7 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
         pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
         
         pthread_mutex_init(&playerMutex, &attr);
+        pthread_mutex_init(&streamMutex, &attr);
         pthread_mutex_init(&mainThreadSyncCallMutex, NULL);
         pthread_cond_init(&playerThreadReadyCondition, NULL);
         pthread_cond_init(&mainThreadSyncCallReadyCondition, NULL);
@@ -624,6 +626,7 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
 	[self destroyAudioResources];
     
     pthread_mutex_destroy(&playerMutex);
+    pthread_mutex_destroy(&streamMutex);
     pthread_mutex_destroy(&mainThreadSyncCallMutex);
     pthread_cond_destroy(&playerThreadReadyCondition);
     pthread_cond_destroy(&mainThreadSyncCallReadyCondition);
@@ -1570,7 +1573,14 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
     
     if (audioFileStream)
     {
+        pthread_mutex_lock(&streamMutex);
+        if (disposeWasRequested)
+        {
+            pthread_mutex_unlock(&playerMutex);
+            return;
+        }
         error = AudioFileStreamParseBytes(audioFileStream, read, readBuffer, flags);
+        pthread_mutex_unlock(&streamMutex);
         
         if (error)
         {
@@ -1798,7 +1808,9 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
     if (runLoop != nil)
     {
         wait = YES;
+        pthread_mutex_lock(&streamMutex);
         disposeWasRequested = YES;
+        pthread_mutex_unlock(&streamMutex);
         
         [self invokeOnPlaybackThread:^
         {
@@ -2487,6 +2499,13 @@ OSStatus AudioConverterCallback(AudioConverterRef inAudioConverter, UInt32* ioNu
 
 -(void) handleAudioPackets:(const void*)inputData numberBytes:(UInt32)numberBytes numberPackets:(UInt32)numberPackets packetDescriptions:(AudioStreamPacketDescription*)packetDescriptionsIn
 {
+    pthread_mutex_lock(&streamMutex);
+    [self handleAudioPackets2:inputData numberBytes:numberBytes numberPackets:numberPackets packetDescriptions:packetDescriptionsIn];
+    pthread_mutex_unlock(&streamMutex);
+}
+
+-(void) handleAudioPackets2:(const void*)inputData numberBytes:(UInt32)numberBytes numberPackets:(UInt32)numberPackets packetDescriptions:(AudioStreamPacketDescription*)packetDescriptionsIn
+{
     if (currentlyReadingEntry == nil)
     {
         return;
@@ -2655,9 +2674,11 @@ OSStatus AudioConverterCallback(AudioConverterRef inAudioConverter, UInt32* ioNu
                 pcmBufferUsedFrameCount += framesAdded;
                 OSSpinLockUnlock(&pcmBufferSpinLock);
 
-                OSSpinLockLock(&currentlyReadingEntry->spinLock);
-                currentlyReadingEntry->framesQueued += framesAdded;
-                OSSpinLockUnlock(&currentlyReadingEntry->spinLock);
+                if (currentlyReadingEntry != nil) {
+                    OSSpinLockLock(&currentlyReadingEntry->spinLock);
+                    currentlyReadingEntry->framesQueued += framesAdded;
+                    OSSpinLockUnlock(&currentlyReadingEntry->spinLock);
+                }
                 
                 return;
             }
