@@ -41,6 +41,7 @@
 #import "NSMutableArray+STKAudioPlayer.h"
 #import "libkern/OSAtomic.h"
 #import <float.h>
+#import <sys/time.h>
 
 #ifndef DBL_MAX
 #define DBL_MAX 1.7976931348623157e+308
@@ -1236,44 +1237,22 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
 
 -(void) dispatchSyncOnMainThread:(void(^)())block
 {
-	__block BOOL finished = NO;
-
-	if (disposeWasRequested)
-	{
-		return;
-	}
-
-	dispatch_async(dispatch_get_main_queue(), ^
-	{
-		if (!disposeWasRequested)
-		{
-			block();
-		}
-
-		pthread_mutex_lock(&mainThreadSyncCallMutex);
-		finished = YES;
-		pthread_cond_signal(&mainThreadSyncCallReadyCondition);
-		pthread_mutex_unlock(&mainThreadSyncCallMutex);
-	});
-
-    pthread_mutex_lock(&mainThreadSyncCallMutex);
-
-	while (true)
-	{
-		if (disposeWasRequested)
-		{
-			break;
-		}
-
-		if (finished)
-		{
-			break;
-		}
-
-		pthread_cond_wait(&mainThreadSyncCallReadyCondition, &mainThreadSyncCallMutex);
-	}
+    if (disposeWasRequested)
+    {
+        return;
+    }
     
-    pthread_mutex_unlock(&mainThreadSyncCallMutex);
+    if (dispatch_get_main_queue() == dispatch_get_current_queue()){
+        block();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), ^
+        {
+            if (!disposeWasRequested)
+            {
+                block();
+            }
+        });
+    }
 }
 
 -(void) playbackThreadQueueMainThreadSyncBlock:(void(^)())block
@@ -1814,6 +1793,7 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
     if (runLoop != nil)
     {
         wait = YES;
+        disposeWasRequested = YES;
         
         [self invokeOnPlaybackThread:^
         {
@@ -2605,7 +2585,24 @@ OSStatus AudioConverterCallback(AudioConverterRef inAudioConverter, UInt32* ioNu
                 
                 waiting = YES;
 
-                pthread_cond_wait(&playerThreadReadyCondition, &playerMutex);
+                // this wait locks when trying to dispose of the object; timeout and re-neck if not disposing
+                while (!disposeWasRequested) {
+                    static struct timespec time_to_wait = {0, 0};
+                    time_to_wait.tv_nsec = 100000000;// 100 ms
+
+                    if (pthread_cond_timedwait_relative_np(&playerThreadReadyCondition, &playerMutex, &time_to_wait) == 0) {
+                        break;
+                    }
+                }
+                
+                if (disposeWasRequested)
+                {
+                    pthread_mutex_unlock(&playerMutex);
+                    
+                    return;
+                }
+                
+                //pthread_cond_wait(&playerThreadReadyCondition, &playerMutex);
                 
                 waiting = NO;
             }
