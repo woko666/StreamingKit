@@ -223,6 +223,9 @@ typedef void(^STKFrameFilter)(UInt32 channelsPerFrame, UInt32 bytesPerFrame, UIn
 /// Plays the given item (all pending queued items are removed)
 -(void) setDataSource:(STKDataSource*)dataSourceIn withQueueItemId:(NSObject*)queueItemId;
 
+/// Queues a DataSource with the given queueItemId
+-(void) startDataSource:(STKDataSource*)dataSource withQueueItemId:(NSObject*)queueItemId seekTo:(double)seekTo pauseOnLoad:(BOOL)pauseOnLoad;
+
 /// Seeks to a specific time (in seconds)
 -(void) seekToTime:(double)value;
 
@@ -271,6 +274,9 @@ typedef void(^STKFrameFilter)(UInt32 channelsPerFrame, UInt32 bytesPerFrame, UIn
 
 /// Sets the gain value (from -96 low to +24 high) for an equalizer band (0 based index)
 -(void) setGain:(float)gain forEqualizerBand:(int)bandIndex;
+
+/// Sets the global gain value (from -96 low to +24 high)
+-(void) setGlobalGain:(float)gain;
 
 @end
 

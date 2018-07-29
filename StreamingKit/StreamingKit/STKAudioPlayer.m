@@ -219,6 +219,8 @@ static AudioStreamBasicDescription recordAudioStreamBasicDescription;
 	Float32 peakPowerDb[2];
 	Float32 averagePowerDb[2];
 	
+    BOOL pauseOnLoad;
+    double seekOnLoad;
 	BOOL meteringEnabled;
     BOOL equalizerOn;
     BOOL equalizerEnabled;
@@ -517,6 +519,8 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
     {
         options = optionsIn;
 		
+        self->pauseOnLoad = NO;
+        self->seekOnLoad = 0.0;
 		self->volume = 1.0;
         self->equalizerEnabled = optionsIn.equalizerBandFrequencies[0] != 0;
 
@@ -755,6 +759,13 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
 -(void) playDataSource:(STKDataSource*)dataSource withQueueItemID:(NSObject *)queueItemId
 {
 	[self setDataSource:dataSource withQueueItemId:queueItemId];
+}
+
+-(void) startDataSource:(STKDataSource*)dataSource withQueueItemId:(NSObject*)queueItemId seekTo:(double)seekTo pauseOnLoad:(BOOL)pauseOnLoad
+{
+    self->pauseOnLoad = pauseOnLoad;
+    self->seekOnLoad = seekTo;
+    [self setDataSource:dataSource withQueueItemId:queueItemId];
 }
 
 -(void) setDataSource:(STKDataSource*)dataSourceIn withQueueItemId:(NSObject*)queueItemId
@@ -1314,6 +1325,13 @@ static void AudioFileStreamPacketsProc(void* clientData, UInt32 numberBytes, UIn
             
             [self setCurrentlyReadingEntry:entry andStartPlaying:YES];
             [self resetPcmBuffers];
+            
+            if (self->pauseOnLoad) {
+                NSLog(@"initial pause at %f",self->seekOnLoad);
+                self->pauseOnLoad = NO;
+                self.internalState = STKAudioPlayerInternalStatePaused;
+                [self seekToTime:self->seekOnLoad];
+            }
         }
         else if (seekToTimeWasRequested && currentlyPlayingEntry && currentlyPlayingEntry != currentlyReadingEntry)
         {
@@ -2224,6 +2242,18 @@ static BOOL GetHardwareCodecClassDesc(UInt32 formatId, AudioClassDescription* cl
     OSStatus status;
 	
 	CHECK_STATUS_AND_RETURN(AudioUnitSetParameter(eqUnit, kAUNBandEQParam_Gain + bandIndex, kAudioUnitScope_Global, 0, gain, 0));
+}
+
+-(void) setGlobalGain:(float)gain
+{
+    if (!eqUnit)
+    {
+        return;
+    }
+    
+    OSStatus status;
+    
+    CHECK_STATUS_AND_RETURN(AudioUnitSetParameter(eqUnit, kAUNBandEQParam_GlobalGain, kAudioUnitScope_Global, 0, gain, 0));
 }
 
 -(AUNode) createConverterNode:(AudioStreamBasicDescription)srcFormat desFormat:(AudioStreamBasicDescription)desFormat
